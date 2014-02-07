@@ -1,3 +1,114 @@
+Version 3.4.2 - July 16, 2012
+
+	* Fix: Fix regression in RX NFC rule insertion for drivers that do
+	  not select rule locations (-N/-U option)
+	* Fix: Remove bogus error message when changing offload settings
+	  on Linux < 2.6.39 (-K option)
+	* Fix: Use alternate method to check for VLAN tag offload on Linux
+	  < 2.6.37 (-k option)
+
+Version 3.4.1 - June 13, 2012
+
+	* Fix: Work around failure of ETHTOOL_GSSET_INFO for unprivileged
+	  users (-k option)
+	* Fix: Report any unexpected error code from ETHTOOL_GSSET_INFO
+	  (-k and -K options)
+	* Doc: Fix the date of the man page to match the last update
+
+Version 3.4 - June 8, 2012
+
+	* Cleanup: Merge RX NFC options
+	* Doc: Improve description of RX NFC options
+	* Doc: Add ntuple to the -K option in the man page
+	* Feature: Show time stamping capabilities (-T option)
+	* Feature: Dump plug-in module EEPROM (-m option)
+	* Feature: Show and change all generic net device features
+	  (-k and -K options)
+
+Version 3.2 - January 12, 2012
+
+	* Feature: Add support for querying and setting private flags
+	  (--show-priv-flags, --set-priv-flags options)
+	* Feature: Omit zero values in Solarflare register tables (-d option)
+	* Feature: Allow driver to select RX NFC rule location (-U option)
+	* Fix: Correct register dump offsets for Intel 82575 chipsets
+	  (-d option)
+
+Version 3.1 - November 16, 2011
+
+	* Fix: Show all non-zero registers for tg3 (-d option)
+	* Feature: Add support for external loopback test (-t option)
+	* Fix: Show correct flow control registers for Intel 82599 (-d option)
+	* Feature: Add support for reporting and configuring numbers of
+	  channels/queues (-l and -L options)
+	* Feature: Report pause frame autonegotiation result (-a option)
+	* Doc: Change device name metavariable from 'ethX' to 'devname'
+	* Doc: Fix various layout problems
+	* Cleanup: Reorganise and add test cases for argument parsing
+	* Fix: Strictly check for extraneous or missing arguments; in
+	  particular, fail if the device name is missing
+
+Version 3.0 - August 4, 2011
+
+	* Feature: Report supported pause frame modes
+	* Feature: Support firmware dump (-w and -W options)
+	* Feature: Report advertised and supported 20G link modes
+	* Feature: Add an 'l4data' option for ip4 filters (-U option)
+	* Fix: Correct swapped h_source and h_dest fields for ether filters
+	  (-U option)
+	* Fix: Set ip_ver field correctly for ip4 filters (-U option)
+	* Fix: Correct parameter validation for -e and -E options; in
+	  particular, treat the 'magic' value as unsigned
+
+Version 2.6.39 - June 1, 2011
+
+	* Feature: Report some driver features (-i option)
+	* Doc: Remove misleading 'Auto' advertising mask from manual page
+	* Doc: Improve table formatting on manual page, using tbl
+	* Doc: Remove initial blank page in printed manual page
+	* Doc: Fix line-wrapping of options
+	* Feature: Add support for ESP as a separate protocol from AH
+	  (-n, -N, -u and -U options)
+	* Cleanup: Remove support for showing RX n-tuple settings
+	  (-u option), which was never implemented correctly in the kernel
+	* Feature: Add support for RX network flow classifier (NFC)
+	  (-u and -U options)
+	* Feature: Add support for e1000 M88 PHY registers (-d option)
+	* Cleanup: Change bug-address to netdev
+
+Version 2.6.38 - March 15, 2011
+
+	* Doc: Fix spelling and spacing in online help
+	* Doc: Update date, version and web site reference in manual page
+	* Doc: Fix spelling, capitalisation, consistency and style in
+	  manual page
+	* Doc: Generalise some references to network devices rather than
+	  Ethernet devices
+	* Fix: Don't silently ignore speed/duplex when autoneg is on
+	* Fix: Report an error (rather than full usage information) if
+	  given an unrecognised option
+	* Feature: Add --version option
+
+Version 2.6.37 - January 5, 2011
+
+	* Fix: Build fix for distributions with kernel headers from
+	  Linux 2.6.9 or earlier
+
+Version 2.6.36 - November 16, 2010
+
+	* Fix: RX n-tuple masks and documentation
+	* Feature: Ethernet-level RX n-tuple filtering and 'clear' action
+	* Feature: stmmac register dump support
+	* Feature: get permanent address (-P) option
+	* Feature: VLAN acceleration control
+
+Version 2.6.35 - August 10, 2010
+
+	* Feature: sfc register dump support
+	* Feature: improve cmd line parsing of ints, IPv4 addresses
+	* Feature: support ethtool named flags, messaging types
+	* Feature: minor man page fixes
+	* Feature: control RX flow hash indirection
 
 Version 2.6.34 - May 26, 2010
 

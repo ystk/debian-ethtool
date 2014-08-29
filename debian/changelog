@@ -1,3 +1,22 @@
+ethtool (1:3.13-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- Ben Hutchings <ben@decadent.org.uk>  Tue, 28 Jan 2014 00:19:59 +0000
+
+ethtool (1:3.11-1) unstable; urgency=low
+
+  * New upstream release
+  * Replace build dependency on automake1.9 with automake
+
+ -- Ben Hutchings <ben@decadent.org.uk>  Sun, 22 Sep 2013 02:12:21 +0100
+
+ethtool (1:3.9-1) unstable; urgency=low
+
+  * New upstream release
+
+ -- Ben Hutchings <ben@decadent.org.uk>  Mon, 20 May 2013 04:17:34 +0100
+
 ethtool (1:3.4.2-1) unstable; urgency=low
 
   * New upstream release:

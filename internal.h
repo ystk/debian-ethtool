@@ -213,6 +213,8 @@ int ixgb_dump_regs(struct ethtool_drvinfo *info, struct ethtool_regs *regs);
 
 int ixgbe_dump_regs(struct ethtool_drvinfo *info, struct ethtool_regs *regs);
 
+int ixgbevf_dump_regs(struct ethtool_drvinfo *info, struct ethtool_regs *regs);
+
 /* Broadcom Tigon3 Ethernet controller */
 int tg3_dump_regs(struct ethtool_drvinfo *info, struct ethtool_regs *regs);
 
@@ -238,6 +240,9 @@ int st_mac100_dump_regs(struct ethtool_drvinfo *info,
 			struct ethtool_regs *regs);
 int st_gmac_dump_regs(struct ethtool_drvinfo *info, struct ethtool_regs *regs);
 
+/* Et131x ethernet controller */
+int et131x_dump_regs(struct ethtool_drvinfo *info, struct ethtool_regs *regs);
+
 /* Rx flow classification */
 int rxclass_parse_ruleopts(struct cmd_context *ctx,
 			   struct ethtool_rx_flow_spec *fsp);
@@ -249,5 +254,8 @@ int rxclass_rule_del(struct cmd_context *ctx, __u32 loc);
 
 /* Module EEPROM parsing code */
 void sff8079_show_all(const __u8 *id);
+
+/* Optics diagnostics */
+void sff8472_show_all(const __u8 *id);
 
 #endif /* ETHTOOL_INTERNAL_H__ */

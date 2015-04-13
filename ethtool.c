@@ -474,7 +474,11 @@ static int rxflow_str_to_type(const char *str)
 static int do_version(struct cmd_context *ctx)
 {
 	fprintf(stdout,
-		PACKAGE " version " VERSION "\n");
+		PACKAGE " version " VERSION
+#ifndef ETHTOOL_ENABLE_PRETTY_DUMP
+		" (pretty dumps disabled)"
+#endif
+		"\n");
 	return 0;
 }
 
@@ -496,6 +500,8 @@ static void dump_supported(struct ethtool_cmd *ep)
 		fprintf(stdout, "MII ");
 	if (mask & SUPPORTED_FIBRE)
 		fprintf(stdout, "FIBRE ");
+	if (mask & SUPPORTED_Backplane)
+		fprintf(stdout, "Backplane ");
 	fprintf(stdout, "]\n");
 
 	dump_link_caps("Supported", "Supports", mask, 0);
@@ -872,11 +878,80 @@ static char *unparse_rxfhashopts(u64 opts)
 	return buf;
 }
 
+static int convert_string_to_hashkey(char *rss_hkey, u32 key_size,
+				     const char *rss_hkey_string)
+{
+	u32 i = 0;
+	int hex_byte, len;
+
+	do {
+		if (i > (key_size - 1)) {
+			fprintf(stderr,
+				"Key is too long for device (%u > %u)\n",
+				i + 1, key_size);
+			goto err;
+		}
+
+		if (sscanf(rss_hkey_string, "%2x%n", &hex_byte, &len) < 1 ||
+		    len != 2) {
+			fprintf(stderr, "Invalid RSS hash key format\n");
+			goto err;
+		}
+
+		rss_hkey[i++] = hex_byte;
+		rss_hkey_string += 2;
+
+		if (*rss_hkey_string == ':') {
+			rss_hkey_string++;
+		} else if (*rss_hkey_string != '\0') {
+			fprintf(stderr, "Invalid RSS hash key format\n");
+			goto err;
+		}
+
+	} while (*rss_hkey_string);
+
+	if (i != key_size) {
+		fprintf(stderr, "Key is too short for device (%u < %u)\n",
+			i, key_size);
+		goto err;
+	}
+
+	return 0;
+err:
+	return 2;
+}
+
+static int parse_hkey(char **rss_hkey, u32 key_size,
+		      const char *rss_hkey_string)
+{
+	if (!key_size) {
+		fprintf(stderr,
+			"Cannot set RX flow hash configuration:\n"
+			" Hash key setting not supported\n");
+		return 1;
+	}
+
+	*rss_hkey = malloc(key_size);
+	if (!(*rss_hkey)) {
+		perror("Cannot allocate memory for RSS hash key");
+		return 1;
+	}
+
+	if (convert_string_to_hashkey(*rss_hkey, key_size,
+				      rss_hkey_string)) {
+		free(*rss_hkey);
+		*rss_hkey = NULL;
+		return 2;
+	}
+	return 0;
+}
+
 static const struct {
 	const char *name;
 	int (*func)(struct ethtool_drvinfo *info, struct ethtool_regs *regs);
 
 } driver_list[] = {
+#ifdef ETHTOOL_ENABLE_PRETTY_DUMP
 	{ "8139cp", realtek_dump_regs },
 	{ "8139too", realtek_dump_regs },
 	{ "r8169", realtek_dump_regs },
@@ -903,6 +978,8 @@ static const struct {
 	{ "st_mac100", st_mac100_dump_regs },
 	{ "st_gmac", st_gmac_dump_regs },
 	{ "et131x", et131x_dump_regs },
+	{ "altera_tse", altera_tse_dump_regs },
+#endif
 };
 
 void dump_hex(FILE *file, const u8 *data, int len, int offset)
@@ -971,13 +1048,13 @@ static int dump_eeprom(int geeprom_dump_raw, struct ethtool_drvinfo *info,
 		fwrite(ee->data, 1, ee->len, stdout);
 		return 0;
 	}
-
+#ifdef ETHTOOL_ENABLE_PRETTY_DUMP
 	if (!strncmp("natsemi", info->driver, ETHTOOL_BUSINFO_LEN)) {
 		return natsemi_dump_eeprom(info, ee);
 	} else if (!strncmp("tg3", info->driver, ETHTOOL_BUSINFO_LEN)) {
 		return tg3_dump_eeprom(info, ee);
 	}
-
+#endif
 	dump_hex(stdout, ee->data, ee->len, ee->offset);
 
 	return 0;
@@ -1762,7 +1839,7 @@ static int do_schannels(struct cmd_context *ctx)
 	if (!changed) {
 		fprintf(stderr, "no channel parameters changed, aborting\n");
 		fprintf(stderr, "current values: tx %u rx %u other %u"
-			"combined %u\n", echannels.rx_count,
+			" combined %u\n", echannels.rx_count,
 			echannels.tx_count, echannels.other_count,
 			echannels.combined_count);
 		return 1;
@@ -3033,92 +3110,141 @@ static int do_grxclass(struct cmd_context *ctx)
 	return err ? 1 : 0;
 }
 
-static int do_grxfhindir(struct cmd_context *ctx)
+static void print_indir_table(struct cmd_context *ctx,
+			      struct ethtool_rxnfc *ring_count,
+			      u32 indir_size, u32 *indir)
 {
-	struct ethtool_rxnfc ring_count;
+	u32 i;
+
+	printf("RX flow hash indirection table for %s with %llu RX ring(s):\n",
+	       ctx->devname, ring_count->data);
+
+	if (!indir_size)
+		printf("Operation not supported\n");
+
+	for (i = 0; i < indir_size; i++) {
+		if (i % 8 == 0)
+			printf("%5u: ", i);
+		printf(" %5u", indir[i]);
+		if (i % 8 == 7)
+			fputc('\n', stdout);
+	}
+}
+
+static int do_grxfhindir(struct cmd_context *ctx,
+			 struct ethtool_rxnfc *ring_count)
+{
 	struct ethtool_rxfh_indir indir_head;
 	struct ethtool_rxfh_indir *indir;
-	u32 i;
+	int err;
+
+	indir_head.cmd = ETHTOOL_GRXFHINDIR;
+	indir_head.size = 0;
+	err = send_ioctl(ctx, &indir_head);
+	if (err < 0) {
+		perror("Cannot get RX flow hash indirection table size");
+		return 1;
+	}
+
+	indir = malloc(sizeof(*indir) +
+		       indir_head.size * sizeof(*indir->ring_index));
+	if (!indir) {
+		perror("Cannot allocate memory for indirection table");
+		return 1;
+	}
+
+	indir->cmd = ETHTOOL_GRXFHINDIR;
+	indir->size = indir_head.size;
+	err = send_ioctl(ctx, indir);
+	if (err < 0) {
+		perror("Cannot get RX flow hash indirection table");
+		free(indir);
+		return 1;
+	}
+
+	print_indir_table(ctx, ring_count, indir->size, indir->ring_index);
+
+	free(indir);
+	return 0;
+}
+
+static int do_grxfh(struct cmd_context *ctx)
+{
+	struct ethtool_rxfh rss_head = {0};
+	struct ethtool_rxnfc ring_count;
+	struct ethtool_rxfh *rss;
+	u32 i, indir_bytes;
+	char *hkey;
 	int err;
 
 	ring_count.cmd = ETHTOOL_GRXRINGS;
 	err = send_ioctl(ctx, &ring_count);
 	if (err < 0) {
 		perror("Cannot get RX ring count");
-		return 102;
+		return 1;
 	}
 
-	indir_head.cmd = ETHTOOL_GRXFHINDIR;
-	indir_head.size = 0;
-	err = send_ioctl(ctx, &indir_head);
+	rss_head.cmd = ETHTOOL_GRSSH;
+	err = send_ioctl(ctx, &rss_head);
+	if (err < 0 && errno == EOPNOTSUPP) {
+		return do_grxfhindir(ctx, &ring_count);
+	} else if (err < 0) {
+		perror("Cannot get RX flow hash indir size and/or key size");
+		return 1;
+	}
+
+	rss = calloc(1, sizeof(*rss) +
+			rss_head.indir_size * sizeof(rss_head.rss_config[0]) +
+			rss_head.key_size);
+	if (!rss) {
+		perror("Cannot allocate memory for RX flow hash config");
+		return 1;
+	}
+
+	rss->cmd = ETHTOOL_GRSSH;
+	rss->indir_size = rss_head.indir_size;
+	rss->key_size = rss_head.key_size;
+	err = send_ioctl(ctx, rss);
 	if (err < 0) {
-		perror("Cannot get RX flow hash indirection table size");
-		return 103;
+		perror("Cannot get RX flow hash configuration");
+		free(rss);
+		return 1;
 	}
 
-	indir = malloc(sizeof(*indir) +
-		       indir_head.size * sizeof(*indir->ring_index));
-	indir->cmd = ETHTOOL_GRXFHINDIR;
-	indir->size = indir_head.size;
-	err = send_ioctl(ctx, indir);
-	if (err < 0) {
-		perror("Cannot get RX flow hash indirection table");
-		return 103;
+	print_indir_table(ctx, &ring_count, rss->indir_size, rss->rss_config);
+
+	indir_bytes = rss->indir_size * sizeof(rss->rss_config[0]);
+	hkey = ((char *)rss->rss_config + indir_bytes);
+
+	printf("RSS hash key:\n");
+	if (!rss->key_size)
+		printf("Operation not supported\n");
+
+	for (i = 0; i < rss->key_size; i++) {
+		if (i == (rss->key_size - 1))
+			printf("%02x\n", (u8) hkey[i]);
+		else
+			printf("%02x:", (u8) hkey[i]);
 	}
 
-	printf("RX flow hash indirection table for %s with %llu RX ring(s):\n",
-	       ctx->devname, ring_count.data);
-	for (i = 0; i < indir->size; i++) {
-		if (i % 8 == 0)
-			printf("%5u: ", i);
-		printf(" %5u", indir->ring_index[i]);
-		if (i % 8 == 7)
-			fputc('\n', stdout);
-	}
+	free(rss);
 	return 0;
 }
 
-static int do_srxfhindir(struct cmd_context *ctx)
+static int fill_indir_table(u32 *indir_size, u32 *indir, int rxfhindir_equal,
+			    char **rxfhindir_weight, u32 num_weights)
 {
-	int rxfhindir_equal = 0;
-	char **rxfhindir_weight = NULL;
-	struct ethtool_rxfh_indir indir_head;
-	struct ethtool_rxfh_indir *indir;
 	u32 i;
-	int err;
-
-	if (ctx->argc < 2)
-		exit_bad_args();
-	if (!strcmp(ctx->argp[0], "equal")) {
-		if (ctx->argc != 2)
-			exit_bad_args();
-		rxfhindir_equal = get_int_range(ctx->argp[1], 0, 1, INT_MAX);
-	} else if (!strcmp(ctx->argp[0], "weight")) {
-		rxfhindir_weight = ctx->argp + 1;
-	} else {
-		exit_bad_args();
-	}
-
-	indir_head.cmd = ETHTOOL_GRXFHINDIR;
-	indir_head.size = 0;
-	err = send_ioctl(ctx, &indir_head);
-	if (err < 0) {
-		perror("Cannot get RX flow hash indirection table size");
-		return 104;
-	}
-
-	indir = malloc(sizeof(*indir) +
-		       indir_head.size * sizeof(*indir->ring_index));
-	indir->cmd = ETHTOOL_SRXFHINDIR;
-	indir->size = indir_head.size;
-
+	/*
+	 * "*indir_size == 0" ==> reset indir to default
+	 */
 	if (rxfhindir_equal) {
-		for (i = 0; i < indir->size; i++)
-			indir->ring_index[i] = i % rxfhindir_equal;
-	} else {
+		for (i = 0; i < *indir_size; i++)
+			indir[i] = i % rxfhindir_equal;
+	} else if (rxfhindir_weight) {
 		u32 j, weight, sum = 0, partial = 0;
 
-		for (j = 0; rxfhindir_weight[j]; j++) {
+		for (j = 0; j < num_weights; j++) {
 			weight = get_u32(rxfhindir_weight[j], 0);
 			sum += weight;
 		}
@@ -3126,34 +3252,185 @@ static int do_srxfhindir(struct cmd_context *ctx)
 		if (sum == 0) {
 			fprintf(stderr,
 				"At least one weight must be non-zero\n");
-			exit(1);
+			return 2;
 		}
 
-		if (sum > indir->size) {
+		if (sum > *indir_size) {
 			fprintf(stderr,
 				"Total weight exceeds the size of the "
 				"indirection table\n");
-			exit(1);
+			return 2;
 		}
 
 		j = -1;
-		for (i = 0; i < indir->size; i++) {
-			while (i >= indir->size * partial / sum) {
+		for (i = 0; i < *indir_size; i++) {
+			while (i >= (*indir_size) * partial / sum) {
 				j += 1;
 				weight = get_u32(rxfhindir_weight[j], 0);
 				partial += weight;
 			}
-			indir->ring_index[i] = j;
+			indir[i] = j;
 		}
+	} else {
+		*indir_size = ETH_RXFH_INDIR_NO_CHANGE;
+	}
+
+	return 0;
+}
+
+static int do_srxfhindir(struct cmd_context *ctx, int rxfhindir_equal,
+			 char **rxfhindir_weight, u32 num_weights)
+{
+	struct ethtool_rxfh_indir indir_head;
+	struct ethtool_rxfh_indir *indir;
+	int err;
+
+	indir_head.cmd = ETHTOOL_GRXFHINDIR;
+	indir_head.size = 0;
+	err = send_ioctl(ctx, &indir_head);
+	if (err < 0) {
+		perror("Cannot get RX flow hash indirection table size");
+		return 1;
+	}
+
+	indir = malloc(sizeof(*indir) +
+		       indir_head.size * sizeof(*indir->ring_index));
+
+	if (!indir) {
+		perror("Cannot allocate memory for indirection table");
+		return 1;
+	}
+
+	indir->cmd = ETHTOOL_SRXFHINDIR;
+	indir->size = indir_head.size;
+
+	if (fill_indir_table(&indir->size, indir->ring_index, rxfhindir_equal,
+			     rxfhindir_weight, num_weights)) {
+		free(indir);
+		return 1;
 	}
 
 	err = send_ioctl(ctx, indir);
 	if (err < 0) {
 		perror("Cannot set RX flow hash indirection table");
-		return 105;
+		free(indir);
+		return 1;
 	}
 
+	free(indir);
 	return 0;
+}
+
+static int do_srxfh(struct cmd_context *ctx)
+{
+	struct ethtool_rxfh rss_head = {0};
+	struct ethtool_rxfh *rss;
+	struct ethtool_rxnfc ring_count;
+	int rxfhindir_equal = 0;
+	char **rxfhindir_weight = NULL;
+	char *rxfhindir_key = NULL;
+	char *hkey = NULL;
+	int err = 0;
+	u32 arg_num = 0, indir_bytes = 0;
+	u32 entry_size = sizeof(rss_head.rss_config[0]);
+	u32 num_weights = 0;
+
+	if (ctx->argc < 2)
+		exit_bad_args();
+
+	while (arg_num < ctx->argc) {
+		if (!strcmp(ctx->argp[arg_num], "equal")) {
+			++arg_num;
+			rxfhindir_equal = get_int_range(ctx->argp[arg_num],
+							0, 1, INT_MAX);
+			++arg_num;
+		} else if (!strcmp(ctx->argp[arg_num], "weight")) {
+			++arg_num;
+			rxfhindir_weight = ctx->argp + arg_num;
+			while (arg_num < ctx->argc &&
+			       isdigit((unsigned char)ctx->argp[arg_num][0])) {
+				++arg_num;
+				++num_weights;
+			}
+			if (!num_weights)
+				exit_bad_args();
+		} else if (!strcmp(ctx->argp[arg_num], "hkey")) {
+			++arg_num;
+			rxfhindir_key = ctx->argp[arg_num];
+			if (!rxfhindir_key)
+				exit_bad_args();
+			++arg_num;
+		} else {
+			exit_bad_args();
+		}
+	}
+
+	if (rxfhindir_equal && rxfhindir_weight) {
+		fprintf(stderr,
+			"Equal and weight options are mutually exclusive\n");
+		return 1;
+	}
+
+	ring_count.cmd = ETHTOOL_GRXRINGS;
+	err = send_ioctl(ctx, &ring_count);
+	if (err < 0) {
+		perror("Cannot get RX ring count");
+		return 1;
+	}
+
+	rss_head.cmd = ETHTOOL_GRSSH;
+	err = send_ioctl(ctx, &rss_head);
+	if (err < 0 && errno == EOPNOTSUPP && !rxfhindir_key) {
+		return do_srxfhindir(ctx, rxfhindir_equal, rxfhindir_weight,
+				     num_weights);
+	} else if (err < 0) {
+		perror("Cannot get RX flow hash indir size and key size");
+		return 1;
+	}
+
+	if (rxfhindir_key) {
+		err = parse_hkey(&hkey, rss_head.key_size,
+				 rxfhindir_key);
+		if (err)
+			return err;
+	}
+
+	if (rxfhindir_equal || rxfhindir_weight)
+		indir_bytes = rss_head.indir_size * entry_size;
+
+	rss = calloc(1, sizeof(*rss) + indir_bytes + rss_head.key_size);
+	if (!rss) {
+		perror("Cannot allocate memory for RX flow hash config");
+		return 1;
+	}
+	rss->cmd = ETHTOOL_SRSSH;
+	rss->indir_size = rss_head.indir_size;
+	rss->key_size = rss_head.key_size;
+
+	if (fill_indir_table(&rss->indir_size, rss->rss_config, rxfhindir_equal,
+			     rxfhindir_weight, num_weights)) {
+		err = 1;
+		goto free;
+	}
+
+	if (hkey)
+		memcpy((char *)rss->rss_config + indir_bytes,
+		       hkey, rss->key_size);
+	else
+		rss->key_size = 0;
+
+	err = send_ioctl(ctx, rss);
+	if (err < 0) {
+		perror("Cannot set RX flow hash configuration");
+		err = 1;
+	}
+
+free:
+	if (hkey)
+		free(hkey);
+
+	free(rss);
+	return err;
 }
 
 static int do_flash(struct cmd_context *ctx)
@@ -3633,6 +3910,7 @@ static int do_getmodule(struct cmd_context *ctx)
 			geeprom_dump_hex = 1;
 		} else if (!geeprom_dump_hex) {
 			switch (modinfo.type) {
+#ifdef ETHTOOL_ENABLE_PRETTY_DUMP
 			case ETH_MODULE_SFF_8079:
 				sff8079_show_all(eeprom->data);
 				break;
@@ -3640,6 +3918,7 @@ static int do_getmodule(struct cmd_context *ctx)
 				sff8079_show_all(eeprom->data);
 				sff8472_show_all(eeprom->data);
 				break;
+#endif
 			default:
 				geeprom_dump_hex = 1;
 				break;
@@ -3831,11 +4110,12 @@ static const struct option {
 	  "		delete %d\n" },
 	{ "-T|--show-time-stamping", 1, do_tsinfo,
 	  "Show time stamping capabilities" },
-	{ "-x|--show-rxfh-indir", 1, do_grxfhindir,
-	  "Show Rx flow hash indirection" },
-	{ "-X|--set-rxfh-indir", 1, do_srxfhindir,
-	  "Set Rx flow hash indirection",
-	  "		equal N | weight W0 W1 ...\n" },
+	{ "-x|--show-rxfh-indir|--show-rxfh", 1, do_grxfh,
+	  "Show Rx flow hash indirection and/or hash key" },
+	{ "-X|--set-rxfh-indir|--rxfh", 1, do_srxfh,
+	  "Set Rx flow hash indirection and/or hash key",
+	  "		[ equal N | weight W0 W1 ... ]\n"
+	  "		[ hkey %x:%x:%x:%x:%x:.... ]\n" },
 	{ "-f|--flash", 1, do_flash,
 	  "Flash firmware image from the specified file to a region on the device",
 	  "               FILENAME [ REGION-NUMBER-TO-FLASH ]\n" },
